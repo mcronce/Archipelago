@@ -46,12 +46,10 @@ WORKDIR /app
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    git \
-    gcc=4:12.2.0-3 \
-    libc6-dev \
     libtk8.6=8.6.13-2 \
-    g++=4:12.2.0-3 \
-    curl && \
+    curl \
+    mariadb-client \
+    libmariadb-dev-compat && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -60,26 +58,29 @@ RUN python -m venv $VIRTUAL_ENV; \
     . $VIRTUAL_ENV/bin/activate
 
 # Copy and install requirements first (better caching)
-COPY WebHostLib/requirements.txt WebHostLib/requirements.txt
-
-RUN pip install --no-cache-dir -r \
-    WebHostLib/requirements.txt \
-    gunicorn==23.0.0
-
-COPY . .
-
-COPY --from=cython-builder /build/*.so ./
-
-# Run ModuleUpdate
-RUN python ModuleUpdate.py -y
-
-# Purge unneeded packages
-RUN apt-get purge -y \
-    git \
-    gcc \
-    libc6-dev \
-    g++ && \
-    apt-get autoremove -y
+COPY --parents **/requirements.txt ModuleUpdate.py .
+RUN \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git \
+        gcc=4:12.2.0-3 \
+        libc6-dev \
+        g++=4:12.2.0-3 \
+        pkg-config && \
+    pip install --no-cache-dir -r \
+        WebHostLib/requirements.txt \
+        gunicorn==23.0.0 \
+        mysqlclient && \
+    python ModuleUpdate.py -y && \
+    apt-get purge -y \
+        git \
+        gcc \
+        libc6-dev \
+        g++ \
+        pkg-config && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy necessary components
 COPY --from=enemizer /release/EnemizerCLI /tmp/EnemizerCLI
