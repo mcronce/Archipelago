@@ -26,7 +26,21 @@ def download_patch(room_id, patch_id):
             with zipfile.ZipFile(filelike, "a") as zf:
                 with zf.open("archipelago.json", "r") as f:
                     manifest = json.load(f)
-                manifest["server"] = f"{app.config['HOST_ADDRESS']}:{last_port}" if last_port else None
+
+                if app.config['OPERATOR_API'] is None:
+                    manifest["server"] = f"{app.config['HOST_ADDRESS']}:{last_port}" if last_port else None
+                else:
+                    import requests
+                    from . import to_url
+
+                    response = requests.get(
+                        app.config['OPERATOR_API'] + '/rooms/' + to_url(room.id) + '/address',
+                        headers={'Accept': 'application/json'}
+                    )
+                    response.raise_for_status()
+                    response = response.json()
+                    manifest['server'] = f"{response['scheme']}://{response['host']}:{response['port']}"
+
                 with zipfile.ZipFile(new_file, "w") as new_zip:
                     for file in zf.infolist():
                         if file.filename == "archipelago.json":

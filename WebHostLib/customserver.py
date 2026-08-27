@@ -250,7 +250,7 @@ def run_server_process(name: str, ponyconfig: dict, static_server_data: dict,
                        host: str, rooms_to_run: multiprocessing.Queue, rooms_shutting_down: multiprocessing.Queue):
     from setproctitle import setproctitle
 
-    setproctitle(name)
+    #setproctitle(name)
     Utils.init_logging(name)
     try:
         import resource

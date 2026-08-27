@@ -11,7 +11,7 @@ from werkzeug.utils import secure_filename
 
 
 from worlds.AutoWorld import AutoWorldRegister, World
-from . import app, cache
+from . import app, cache, to_url
 from .markdown import render_markdown
 from .models import Seed, Room, Command, UUID, uuid4
 from Utils import title_sorted, utcnow
@@ -176,6 +176,11 @@ def new_room(seed: UUID):
         abort(404)
     room = Room(seed=seed, owner=session["_id"], tracker=uuid4())
     commit()
+
+    if app.config['OPERATOR_API'] is not None:
+        import requests
+        requests.post(app.config['OPERATOR_API'] + '/rooms/' + to_url(room.id))
+
     return redirect(url_for("host_room", room=room.id))
 
 

@@ -100,12 +100,20 @@ def init_generator(config: dict[str, Any]) -> None:
     db.generate_mapping()
 
 
-def cleanup():
+def cleanup(config: dict):
     """delete unowned user-content"""
     with db_session:
         # >>> bool(uuid.UUID(int=0))
         # True
-        rooms = Room.select(lambda room: room.owner == UUID(int=0)).delete(bulk=True)
+        rooms = Room.select(lambda room: room.owner == UUID(int=0))
+
+        if config['OPERATOR_API'] is not None:
+            import requests
+            from . import to_url
+            for room in rooms:
+                requests.delete(config['OPERATOR_API'] + '/rooms/' + to_url(room.id))
+
+        rooms = rooms.delete(bulk=True)
         seeds = Seed.select(lambda seed: seed.owner == UUID(int=0) and not seed.rooms).delete(bulk=True)
         slots = Slot.select(lambda slot: not slot.seed).delete(bulk=True)
         # Command gets deleted by ponyorm Cascade Delete, as Room is Required
@@ -118,7 +126,10 @@ def autohost(config: dict):
         stop_event = _stop_event
         try:
             with Locker("autohost"):
-                cleanup()
+                cleanup(config)
+                if config['HOSTERS'] == 0:
+                    logging.info('Set to autolaunch zero hosters; terminating autohost')
+                    return
                 hosters = []
                 for x in range(config["HOSTERS"]):
                     hoster = MultiworldInstance(config, x)

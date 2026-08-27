@@ -10,6 +10,12 @@ STATE_QUEUED = 0
 STATE_STARTED = 1
 STATE_ERROR = -1
 
+def uuid4_room_id() -> UUID:
+    base_id = uuid4()
+    # In k8s mode, the room ID is part of the ingress hostname; hostname segments must start with an alphanumeric character per DNS RFC.  Losing two bits of entropy from the 128-bit UUID isn't a humungous loss.
+    while (base_id.bytes[0] >> 2) >= 62:
+        base_id = uuid4()
+    return base_id
 
 class Slot(db.Entity):
     id = PrimaryKey(int, auto=True)
@@ -21,7 +27,7 @@ class Slot(db.Entity):
 
 
 class Room(db.Entity):
-    id = PrimaryKey(UUID, default=uuid4)
+    id = PrimaryKey(UUID, default=uuid4_room_id)
     last_activity: datetime = Required(datetime, default=lambda: utcnow(), index=True)
     creation_time: datetime = Required(datetime, default=lambda: utcnow(), index=True)  # index used by landing page
     owner = Required(UUID, index=True)
@@ -63,3 +69,4 @@ class Generation(db.Entity):
 class GameDataPackage(db.Entity):
     checksum = PrimaryKey(str)
     data = Required(bytes)
+

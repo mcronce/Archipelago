@@ -39,6 +39,7 @@ try:
     from pony.orm.dbapiprovider import OperationalError
 except ImportError:
     OperationalError = ConnectionError
+from pony.orm import Database, db_session
 
 import NetUtils
 import Utils
@@ -249,13 +250,16 @@ class Context:
     all_location_and_group_names: typing.Dict[str, typing.Set[str]]
     non_hintable_names: typing.Dict[str, typing.AbstractSet[str]]
     spheres: typing.List[typing.Dict[int, typing.Set[int]]]
+    room_id: str | None
     """ each sphere is { player: { location_id, ... } } """
     logger: logging.Logger
+    db: Database | None
 
-    def __init__(self, host: str, port: int, server_password: str, password: str, location_check_points: int,
+    def __init__(self, host: str, port: int, server_password: str, password: str, savefile: str, location_check_points: int,
                  hint_cost: int, item_cheat: bool, release_mode: str = "disabled", collect_mode="disabled",
                  countdown_mode: str = "auto", remaining_mode: str = "disabled", auto_shutdown: typing.SupportsFloat = 0, 
-                 compatibility: int = 2, log_network: bool = False, logger: logging.Logger = logging.getLogger()):
+                 compatibility: int = 2, log_network: bool = False, room_id: str | None = None,
+                 logger: logging.Logger = logging.getLogger(), db = None):
         self.logger = logger
         super(Context, self).__init__()
         self.slot_info = {}
@@ -265,7 +269,7 @@ class Context:
         self.compatibility: int = compatibility
         self.shutdown_task = None
         self.data_filename = None
-        self.save_filename = None
+        self.save_filename = savefile
         self.saving = False
         self.player_names: typing.Dict[team_slot, str] = {}
         self.player_name_lookup: typing.Dict[str, team_slot] = {}
@@ -290,6 +294,8 @@ class Context:
         self.collect_mode: str = collect_mode
         self.countdown_mode: str = countdown_mode
         self.item_cheat = item_cheat
+        self.room_id = room_id
+        self.db = db
         self.exit_event = asyncio.Event()
         self.client_activity_timers: typing.Dict[
             team_slot, datetime.datetime] = {}  # datetime of last new item check
@@ -564,12 +570,19 @@ class Context:
             if game_name in game_data_packages:
                 data = game_data_packages[game_name]
             self.logger.info(f"Loading embedded data package for game {game_name}")
-            self.gamespackage[game_name] = data
-            self.item_name_groups[game_name] = data["item_name_groups"]
+
+            if 'version' not in data:
+                # We're loading from a manifest without gamedatapackages populated
+                self.gamespackage[game_name] = data
+
+            # If missing, we're loading from a manifest without gamedatapackages; keep what we loaded from the static world
+            if 'item_name_groups' in data:
+                self.item_name_groups[game_name] = data["item_name_groups"]
+                del data["item_name_groups"]  # remove from data package, but keep in self.item_name_groups
+
             if "location_name_groups" in data:
                 self.location_name_groups[game_name] = data["location_name_groups"]
                 del data["location_name_groups"]
-            del data["item_name_groups"]  # remove from data package, but keep in self.item_name_groups
         self._init_game_data()
         for game_name, data in self.item_name_groups.items():
             self.read_data[f"item_name_groups_{game_name}"] = lambda lgame=game_name: self.item_name_groups[lgame]
@@ -593,16 +606,32 @@ class Context:
         return False
 
     def _save(self, exit_save: bool = False) -> bool:
+        # Does not use Utils.restricted_dumps because we'd rather make a save than not make one
+        encoded_save = pickle.dumps(self.get_save())
+
         try:
-            # Does not use Utils.restricted_dumps because we'd rather make a save than not make one
-            encoded_save = pickle.dumps(self.get_save())
             with open(self.save_filename, "wb") as f:
                 f.write(zlib.compress(encoded_save))
+
+            if self.db is not None:
+                self._save_to_db(encoded_save, exit_save)
         except Exception as e:
             self.logger.exception(e)
             return False
         else:
             return True
+
+    @db_session
+    def _save_to_db(self, encoded_save: str, exit_save: bool):
+        from WebHostLib.models import Room
+        from WebHostLib import to_python
+
+        room_id = to_python(self.room_id)
+        room = Room.get(id=room_id)
+        room.multisave = encoded_save
+        # saving only occurs on activity, so we can "abuse" this information to mark this as last_activity
+        if not exit_save:  # we don't want to count a shutdown as activity, which would restart the server again
+            room.last_activity = Utils.utcnow()
 
     def init_save(self, enabled: bool = True):
         self.saving = enabled
@@ -705,7 +734,11 @@ class Context:
         if "game_options" in savedata:
             self.hint_cost = savedata["game_options"]["hint_cost"]
             self.location_check_points = savedata["game_options"]["location_check_points"]
-            self.server_password = savedata["game_options"]["server_password"]
+            # TODO:  Only skip setting server_password from game options when we actually have one
+            # on the command line.  Just unconditionally removing this is a dirty hack for the k8s
+            # integration that assumes we have one, which is not a valid assumption in the general
+            # case.
+            #self.server_password = savedata["game_options"]["server_password"]
             self.password = savedata["game_options"]["password"]
             self.release_mode = savedata["game_options"]["release_mode"]
             self.remaining_mode = savedata["game_options"]["remaining_mode"]
@@ -789,8 +822,9 @@ class Context:
                             raise Exception(f"Could not set server option {key}, skipping.") from e
                         except Exception as e:
                             self.logger.exception(e)
-                self.logger.debug(f"Setting server option {key} to {value} from supplied multidata")
-                setattr(self, key, value)
+                if key != 'server_password':
+                    self.logger.debug(f"Setting server option {key} to {value} from supplied multidata")
+                    setattr(self, key, value)
             elif key == "disable_item_cheat":
                 self.item_cheat = not bool(value)
             else:
@@ -2645,6 +2679,8 @@ def parse_args() -> argparse.Namespace:
     #0 -> recommended for tournaments to force a level playing field, only allow an exact version match
     """)
     parser.add_argument('--log_network', default=defaults["log_network"], action="store_true")
+    parser.add_argument('--database_config', default=defaults['database_config'])
+    parser.add_argument('--room_id', default=defaults['room_id'])
     args = parser.parse_args()
     return args
 
@@ -2688,10 +2724,23 @@ async def main(args: argparse.Namespace):
                        loglevel=args.loglevel.lower(),
                        add_timestamp=args.logtime)
 
-    ctx = Context(args.host, args.port, args.server_password, args.password, args.location_check_points,
+    if args.database_config is None:
+        db = None
+    else:
+        import yaml
+        from WebHostLib.models import db
+
+        with open(args.database_config, 'r') as f:
+            database_config = yaml.safe_load(f)
+        print(database_config)
+
+        db.bind(**database_config)
+        db.generate_mapping()
+
+    ctx = Context(args.host, args.port, args.server_password, args.password, args.savefile, args.location_check_points,
                   args.hint_cost, not args.disable_item_cheat, args.release_mode, args.collect_mode,
                   args.countdown_mode, args.remaining_mode,
-                  args.auto_shutdown, args.compatibility, args.log_network)
+                  args.auto_shutdown, args.compatibility, args.log_network, args.room_id, db=db)
     data_filename = args.multidata
 
     if not data_filename:
@@ -2731,6 +2780,7 @@ async def main(args: argparse.Namespace):
         port=ctx.port,
         ssl=ssl_context,
         extensions=[server_per_message_deflate_factory],
+        process_request=health_intercept
     )
     ip = args.host if args.host else Utils.get_public_ipv4()
     logging.info('Hosting game at %s:%d (%s)' % (ip, ctx.port,
@@ -2765,6 +2815,11 @@ async def main(args: argparse.Namespace):
     if ctx.shutdown_task:
         await ctx.shutdown_task
 
+from websockets.datastructures import Headers
+def health_intercept(path: str, _headers: Headers) -> tuple[int, Headers, bytes] | None:
+    if path == '/health':
+        return (200, Headers(), b'')
+    return None
 
 client_message_processor = ClientMessageProcessor
 

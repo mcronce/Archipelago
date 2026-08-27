@@ -628,6 +628,8 @@ class ServerOptions(Group):
     auto_shutdown: AutoShutdown = AutoShutdown(0)
     compatibility: Compatibility = Compatibility(2)
     log_network: LogNetwork = LogNetwork(0)
+    database_config: str | None = None
+    room_id: str | None = None
 
 
 class GeneratorOptions(Group):
