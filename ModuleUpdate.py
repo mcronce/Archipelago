@@ -12,7 +12,7 @@ if sys.platform in ("win32", "darwin") and not (3, 11, 9) <= sys.version_info < 
 elif sys.platform in ("win32", "darwin") and sys.version_info < (3, 11, 13):
     # There are known security issues, but no easy way to install fixed versions on Windows for testing.
     warnings.warn(f"Python Version {sys.version_info} has security issues. Don't use in production.")
-elif not (3, 11, 0) <= sys.version_info < (3, 14, 0):
+elif not (3, 11, 0) <= sys.version_info < (3, 17, 0):
     # Other platforms may get security backports instead of micro updates, so the number is unreliable.
     raise RuntimeError(f"Incompatible Python Version found: {sys.version_info}. 3.11.0 through 3.13.x is supported.")
 
