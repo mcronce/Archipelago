@@ -192,6 +192,11 @@ def uploads():
                             if res is str:
                                 return res
                             elif res:
+                                if app.config['OPERATOR_API'] is not None:
+                                    import requests
+                                    from . import to_url
+                                    requests.post(app.config['OPERATOR_API'] + '/seeds/' + to_url(res.id))
+
                                 return redirect(url_for("view_seed", seed=res.id))
                 else:
                     uploaded_file.seek(0)  # offset from is_zipfile check
@@ -204,6 +209,12 @@ def uploads():
                     else:
                         seed = Seed(multidata=multidata, slots=slots, owner=session["_id"])
                         flush()  # place into DB and generate ids
+
+                        if app.config['OPERATOR_API'] is not None:
+                            import requests
+                            from . import to_url
+                            requests.post(app.config['OPERATOR_API'] + '/seeds/' + to_url(seed.id))
+
                         return redirect(url_for("view_seed", seed=seed.id))
             else:
                 flash("Not recognized file format. Awaiting a .archipelago file or .zip containing one.")

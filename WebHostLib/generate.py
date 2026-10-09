@@ -108,6 +108,10 @@ def start_generation(options: dict[str, dict | str], meta: dict[str, Any]):
         try:
             seed_id = gen_game({name: vars(options) for name, options in gen_options.items()},
                                meta=meta, owner=session["_id"].int, timeout=app.config["JOB_TIME"])
+            if app.config['OPERATOR_API'] is not None:
+                import requests
+                from . import to_url
+                requests.post(app.config['OPERATOR_API'] + '/seeds/' + to_url(seed_id))
         except BaseException as e:
             from .autolauncher import handle_generation_failure
             handle_generation_failure(e)
@@ -216,6 +220,10 @@ def wait_seed(seed: UUID):
     seed_id = seed
     seed = Seed.get(id=seed_id)
     if seed:
+        if app.config['OPERATOR_API'] is not None:
+            import requests
+            from . import to_url
+            requests.post(app.config['OPERATOR_API'] + '/seeds/' + to_url(seed_id))
         return redirect(url_for("view_seed", seed=seed_id))
     generation = Generation.get(id=seed_id)
 

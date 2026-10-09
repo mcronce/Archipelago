@@ -179,7 +179,11 @@ def new_room(seed: UUID):
 
     if app.config['OPERATOR_API'] is not None:
         import requests
-        requests.post(app.config['OPERATOR_API'] + '/rooms/' + to_url(room.id))
+
+        requests.post(
+            app.config['OPERATOR_API'] + '/rooms/' + to_url(room.id),
+            json = {'seed_id': to_url(seed.id)}
+        )
 
     return redirect(url_for("host_room", room=room.id))
 
